@@ -56,6 +56,8 @@ func main() {
 		err = cmdWhoami(args)
 	case "doctor":
 		err = cmdDoctor(args)
+	case "watch":
+		err = cmdWatch(args)
 	case "hook":
 		os.Exit(cmdHook(args))
 	case "-h", "--help", "help":
@@ -352,11 +354,29 @@ func cmdDoctor(args []string) error {
 		fmt.Printf("enrolled: no (%v)\n", err)
 	}
 
-	fmt.Println("\ndelivery rungs (verified on Claude Code v2.1.211):")
-	fmt.Println("  SessionStart/UserPromptSubmit additionalContext  floor, always on")
-	fmt.Println("  Stop turn-tail delivery                          always on")
-	fmt.Println("  Stop parked waiter + asyncRewake (idle wake)     on, ~4-5s")
+	fmt.Println("\ndelivery channels (verified on Claude Code v2.1.211):")
+	fmt.Println("  turn start   SessionStart/UserPromptSubmit additionalContext   always on")
+	fmt.Println("  turn tail    Stop hook delivers what arrived during the turn   always on")
+	fmt.Println("  idle wake    parked Stop waiter + asyncRewake                  ~4-5s, ~180s window")
+	fmt.Println("  always on    monitor process (monitors.json)                   ~3s, no window")
+	fmt.Println("\nThe parked waiter only covers the window right after a turn ends; the monitor")
+	fmt.Println("covers a session idle for hours. Both race, and atomic delivery means exactly")
+	fmt.Println("one of them wins any given message.")
+
+	if sid := mail.SessionID(); sid != "" {
+		fmt.Printf("\nmonitor binding: session id visible to child processes (%s)\n", short(sid))
+	} else {
+		fmt.Println("\nmonitor binding: NO session id in this environment — if `mailroom watch`")
+		fmt.Println("  reports the same, the monitor cannot bind and only the hook channels work.")
+	}
 	return nil
+}
+
+func cmdWatch(args []string) error {
+	fs := flag.NewFlagSet("watch", flag.ExitOnError)
+	interval := fs.Int("interval", 2, "seconds between inbox checks")
+	_ = fs.Parse(args)
+	return mail.Watch(os.Stdout, os.Stderr, time.Duration(*interval)*time.Second)
 }
 
 func cmdHook(args []string) int {

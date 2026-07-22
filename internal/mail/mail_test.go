@@ -365,6 +365,117 @@ func TestWakeBudgetExhausts(t *testing.T) {
 	}
 }
 
+// --- the monitor channel ---
+
+func TestMonitorDeliversAndConsumes(t *testing.T) {
+	setup(t)
+	a := enroll(t, "proj", "builder", "sess-a")
+	enroll(t, "proj", "reviewer", "sess-b")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sess-b")
+
+	if _, err := Send(a, &Message{To: []string{"reviewer"}, Type: "request",
+		Subject: "wake up", Body: "body", Priority: "now"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, diag strings.Builder
+	if !deliverOnce(&out, &diag) {
+		t.Fatal("monitor did not deliver a pending message")
+	}
+	if !strings.Contains(out.String(), "wake up") {
+		t.Fatalf("delivered payload missing subject: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "UNTRUSTED PEER DATA") {
+		t.Fatal("monitor delivery skipped the untrusted-data frame")
+	}
+
+	// Second tick must be silent, or every poll would induce another turn.
+	out.Reset()
+	if deliverOnce(&out, &diag) {
+		t.Fatalf("monitor redelivered: %q", out.String())
+	}
+}
+
+func TestMonitorAndWaiterCannotDoubleDeliver(t *testing.T) {
+	setup(t)
+	a := enroll(t, "proj", "builder", "sess-a")
+	enroll(t, "proj", "reviewer", "sess-b")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sess-b")
+
+	if _, err := Send(a, &Message{To: []string{"reviewer"}, Type: "request",
+		Subject: "contested", Body: "body", Priority: "now"}); err != nil {
+		t.Fatal(err)
+	}
+	// The Stop waiter wins the race.
+	won, _ := Fetch("proj", "reviewer")
+	if len(won) != 1 {
+		t.Fatalf("waiter should have taken the message, got %d", len(won))
+	}
+	// The monitor must then find nothing.
+	var out, diag strings.Builder
+	if deliverOnce(&out, &diag) {
+		t.Fatalf("both channels delivered the same message: %q", out.String())
+	}
+}
+
+func TestMonitorIgnoresFYI(t *testing.T) {
+	setup(t)
+	a := enroll(t, "proj", "builder", "sess-a")
+	enroll(t, "proj", "reviewer", "sess-b")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sess-b")
+
+	if _, err := Send(a, &Message{To: []string{"reviewer"}, Type: "note",
+		Subject: "low priority", Body: "body", Priority: "fyi"}); err != nil {
+		t.Fatal(err)
+	}
+	var out, diag strings.Builder
+	if deliverOnce(&out, &diag) {
+		t.Fatal("fyi must never induce a turn")
+	}
+	// ...but it must still be waiting for the next turn boundary.
+	if got, _ := Peek("proj", "reviewer"); len(got) != 1 {
+		t.Fatal("fyi message was lost instead of held")
+	}
+}
+
+func TestMonitorRespectsWakeBudget(t *testing.T) {
+	setup(t)
+	t.Setenv("MAILROOM_WAKES_PER_HOUR", "1")
+	a := enroll(t, "proj", "builder", "sess-a")
+	enroll(t, "proj", "reviewer", "sess-b")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sess-b")
+
+	send := func(subj string) {
+		t.Helper()
+		if _, err := Send(a, &Message{To: []string{"reviewer"}, Type: "request",
+			Subject: subj, Body: "b", Priority: "now"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out, diag strings.Builder
+	send("first")
+	if !deliverOnce(&out, &diag) {
+		t.Fatal("first delivery should be allowed")
+	}
+	send("second")
+	out.Reset()
+	if deliverOnce(&out, &diag) {
+		t.Fatal("budget exhausted: monitor must not induce another turn")
+	}
+	if got, _ := Peek("proj", "reviewer"); len(got) != 1 {
+		t.Fatal("budget-blocked message must be held, not dropped")
+	}
+}
+
+func TestMonitorSilentWhenNotEnrolled(t *testing.T) {
+	setup(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sess-nobody")
+	var out, diag strings.Builder
+	if deliverOnce(&out, &diag) || out.Len() != 0 {
+		t.Fatal("monitor must emit nothing for an unenrolled session")
+	}
+}
+
 func TestIDsAreSortable(t *testing.T) {
 	var prev string
 	for i := 0; i < 200; i++ {

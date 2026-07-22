@@ -1,0 +1,8 @@
+[
+  {
+    "name": "mailroom",
+    "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/mailroom\" watch",
+    "description": "Delivers Mailroom messages from peer sessions as they arrive",
+    "when": "always"
+  }
+]

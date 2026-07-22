@@ -52,11 +52,17 @@ mailroom roster
 A Claude Code session is turn-based — it only thinks when it has a turn. Mailroom delivers
 on three rungs, and **the floor always works**:
 
-| Rung | Mechanism | Reaches an idle session? |
+| Channel | Mechanism | Reaches an idle session? |
 |---|---|---|
 | Turn start | `SessionStart` / `UserPromptSubmit` → `additionalContext` | No — but costs zero tokens when the mailbox is empty |
 | Turn tail | `Stop` hook delivers whatever arrived *during* the turn | No — but nothing is ever missed |
-| **Idle wake** | parked `Stop` hook + `asyncRewake`, exit 2 | **Yes — ~4–5s, verified** |
+| Idle wake | parked `Stop` hook + `asyncRewake`, exit 2 | **Yes — ~4–5s**, for the window after a turn |
+| **Always on** | monitor process (`monitors.json`) | **Yes — ~3s, no window** |
+
+The last two matter together. A parked waiter is bounded by its hook timeout, so it covers
+the minutes after a turn ends and then expires — leaving a session that has been quiet for
+an hour unreachable. The monitor is a persistent process for the life of the session and
+has no such window. Both race for each message; atomic delivery means exactly one wins.
 
 The idle-wake claim is measured, not assumed. See [`SPEC.md`](SPEC.md) for the verified
 platform behavior on Claude Code v2.1.211, including the test method.
