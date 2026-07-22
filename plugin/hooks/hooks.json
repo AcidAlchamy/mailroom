@@ -1,0 +1,56 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/mailroom",
+            "args": ["hook", "session-start"],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/mailroom",
+            "args": ["hook", "prompt"],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/mailroom",
+            "args": ["hook", "stop", "--park", "180"],
+            "timeout": 240,
+            "async": true,
+            "asyncRewake": true,
+            "statusMessage": "mailroom: watching for peer mail"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/mailroom",
+            "args": ["hook", "depart"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

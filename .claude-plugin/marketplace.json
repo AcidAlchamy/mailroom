@@ -1,0 +1,18 @@
+{
+  "name": "mailroom",
+  "owner": {
+    "name": "AcidAlchamy",
+    "url": "https://github.com/AcidAlchamy"
+  },
+  "metadata": {
+    "description": "A session mailbox for Claude Code.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "mailroom",
+      "source": "./plugin",
+      "description": "A project-scoped mailbox for independently-started Claude Code sessions, so agents coordinate with each other instead of routing everything through you."
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "name": "mailroom",
+  "version": "0.1.0",
+  "description": "A project-scoped mailbox for independently-started Claude Code sessions, so agents coordinate with each other instead of routing everything through you.",
+  "author": {
+    "name": "AcidAlchamy"
+  },
+  "homepage": "https://github.com/AcidAlchamy/mailroom",
+  "repository": "https://github.com/AcidAlchamy/mailroom",
+  "license": "Apache-2.0",
+  "keywords": [
+    "multi-agent",
+    "coordination",
+    "messaging",
+    "mailbox",
+    "orchestration"
+  ]
+}

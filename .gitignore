@@ -1,0 +1,4 @@
+plugin/bin/*
+!plugin/bin/.gitkeep
+*.tmp
+.mailroom.json
