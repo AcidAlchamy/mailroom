@@ -18,13 +18,28 @@ data that cannot approve a permission. You are the host, not the relay.
 
 ## Install
 
+**v0.1 builds from source.** Prebuilt binaries and one-command marketplace install land with
+the first tagged release; until then this needs Go 1.21+.
+
 ```bash
-claude plugin marketplace add AcidAlchamy/mailroom
+git clone https://github.com/AcidAlchamy/mailroom && cd mailroom
 ```
 
 ```bash
-claude plugin install mailroom@mailroom
+go build -trimpath -ldflags="-s -w" -o plugin/bin/mailroom ./cmd/mailroom
 ```
+
+On Windows, build to `plugin/bin/mailroom.exe` and copy it alongside as `mailroom`
+(extensionless) so the exec-form hooks resolve on every platform.
+
+Then load it:
+
+```bash
+claude --plugin-dir /path/to/mailroom/plugin
+```
+
+Once released, the whole install becomes `claude plugin marketplace add AcidAlchamy/mailroom`
+followed by `claude plugin install mailroom@mailroom`.
 
 ## Use
 
