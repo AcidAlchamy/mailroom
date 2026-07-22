@@ -380,22 +380,56 @@ func Defer(project, id string, d time.Duration) (Ask, error) {
 // ---- outbound notification ----
 
 type deskConfig struct {
-	NotifyCmd string `json:"notify_cmd"`
+	NotifyCmd  string   `json:"notify_cmd"`
+	NotifyCmds []string `json:"notify_cmds"`
+	// Which events buzz. Default: blocking asks and missed deadlines only.
+	// Add "opened" to be told about every ask, blocking or not.
+	NotifyOn []string `json:"notify_on"`
 }
 
-// notify fires the user's own notification command. For a human who is not at the
-// terminal, "the blocking ask hit my phone in four seconds" is worth more than any
-// in-terminal delivery mechanism.
-func notify(a Ask, event string) {
-	if event == "opened" && !a.Blocking {
-		return // non-blocking asks wait for the digest; they are not worth a buzz
+func (c deskConfig) cmds() []string {
+	out := c.NotifyCmds
+	if strings.TrimSpace(c.NotifyCmd) != "" {
+		out = append(out, c.NotifyCmd)
 	}
+	return out
+}
+
+func (c deskConfig) wants(event string, blocking bool) bool {
+	on := c.NotifyOn
+	if len(on) == 0 {
+		on = []string{"blocking", "defaulted"}
+	}
+	for _, e := range on {
+		switch strings.TrimSpace(strings.ToLower(e)) {
+		case "all", "opened":
+			return true
+		case "blocking":
+			if event == "opened" && blocking {
+				return true
+			}
+		case "defaulted":
+			if event == "defaulted" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// notify fires the user's own notification command(s). For a human who is not at the
+// terminal, "the ask reached me in four seconds" is worth more than any in-terminal
+// delivery mechanism.
+func notify(a Ask, event string) {
 	b, err := os.ReadFile(filepath.Join(Root(), "config.json"))
 	if err != nil {
 		return
 	}
 	var cfg deskConfig
-	if json.Unmarshal(b, &cfg) != nil || strings.TrimSpace(cfg.NotifyCmd) == "" {
+	if json.Unmarshal(b, &cfg) != nil {
+		return
+	}
+	if !cfg.wants(event, a.Blocking) || len(cfg.cmds()) == 0 {
 		return
 	}
 
@@ -405,16 +439,19 @@ func notify(a Ask, event string) {
 		body = fmt.Sprintf("Nobody answered in %s, applied default %q. %s",
 			a.Default.After, a.Default.Choice, a.Action)
 	}
-	cmd := cfg.NotifyCmd
-	cmd = strings.ReplaceAll(cmd, "{title}", shellSafe(title))
-	cmd = strings.ReplaceAll(cmd, "{body}", shellSafe(body))
-	cmd = strings.ReplaceAll(cmd, "{id}", shellSafe(a.ID))
-	cmd = strings.ReplaceAll(cmd, "{project}", shellSafe(a.Project))
+	for _, raw := range cfg.cmds() {
+		cmd := strings.ReplaceAll(raw, "{title}", shellSafe(title))
+		cmd = strings.ReplaceAll(cmd, "{body}", shellSafe(body))
+		cmd = strings.ReplaceAll(cmd, "{id}", shellSafe(a.ID))
+		cmd = strings.ReplaceAll(cmd, "{project}", shellSafe(a.Project))
+		cmd = strings.ReplaceAll(cmd, "{from}", shellSafe(a.From))
 
-	c := exec.Command(shellName(), shellFlag(), cmd)
-	c.Stdout, c.Stderr = nil, nil
-	_ = c.Start()
-	go func() { _ = c.Wait() }()
+		c := exec.Command(shellName(), shellFlag(), cmd)
+		c.Stdout, c.Stderr = nil, nil
+		if c.Start() == nil {
+			go func(p *exec.Cmd) { _ = p.Wait() }(c)
+		}
+	}
 }
 
 // shellSafe strips what a shell would treat as structure. The ask text originates from an

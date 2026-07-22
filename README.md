@@ -179,12 +179,24 @@ that is drowning must consolidate rather than page you five times.
 `~/.mailroom/config.json`:
 
 ```json
-{ "notify_cmd": "curl -s -d \"{body}\" ntfy.sh/my-private-topic" }
+{
+  "notify_on": ["opened", "defaulted"],
+  "notify_cmds": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File C:\\path\\to\\mailroom\\plugin\\contrib\\notify-windows.ps1 -Title \"{title}\" -Body \"{body}\" -Id \"{id}\"",
+    "curl -s -d \"{body}\" ntfy.sh/your-private-topic"
+  ]
+}
 ```
 
-Fires on a blocking ask and on a missed deadline. `{title}`, `{body}`, `{id}` and `{project}`
-are substituted — and stripped of shell metacharacters first, because the text is written by
-an agent.
+`{title}`, `{body}`, `{id}`, `{project}` and `{from}` are substituted — and stripped of shell
+metacharacters first, because that text was written by an agent and lands on a command line.
+
+`notify_on` defaults to `["blocking", "defaulted"]`. Add `"opened"` to be told about every
+ask. A Windows toast script ships in `plugin/contrib/`; it needs no modules and puts the
+answer command right in the notification.
+
+Notifications never block the mailbox: a failing notify command is ignored, and the toast
+script falls back to a message box if WinRT is unavailable.
 
 ## Security
 
