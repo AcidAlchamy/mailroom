@@ -52,7 +52,7 @@ func emitContext(event, text string) {
 
 // HookSessionStart primes a session: who it is, who else is live, what is waiting.
 func HookSessionStart(in HookInput) int {
-	id, err := Whoami()
+	id, err := Whoami("")
 	if err != nil {
 		// Not enrolled. Emit NOTHING. A plugin that injects context into a repo that
 		// never asked for it gets uninstalled in a week.
@@ -95,7 +95,7 @@ func HookSessionStart(in HookInput) int {
 // HookPrompt is the floor: delivers pending mail at the next turn boundary.
 // Costs zero tokens when the mailbox is empty.
 func HookPrompt(in HookInput) int {
-	id, err := Whoami()
+	id, err := Whoami("")
 	if err != nil {
 		return 0
 	}
@@ -118,7 +118,7 @@ func HookPrompt(in HookInput) int {
 //
 // Exit 2 with the payload on stderr is what wakes the model.
 func HookStop(in HookInput, park time.Duration) int {
-	id, err := Whoami()
+	id, err := Whoami("")
 	if err != nil {
 		return 0
 	}
@@ -180,7 +180,7 @@ func wake(id Identity, msgs []Message) int {
 
 // HookDepart releases the role on session end.
 func HookDepart(in HookInput) int {
-	id, err := Whoami()
+	id, err := Whoami("")
 	if err != nil {
 		return 0
 	}

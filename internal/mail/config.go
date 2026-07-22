@@ -234,11 +234,7 @@ func Enroll(project, role, display, note string) (Identity, Identity, error) {
 	if err := writeJSONAtomic(filepath.Join(agentsDir(project), role+".json"), id); err != nil {
 		return Identity{}, prev, err
 	}
-	if sid := id.SessionID; sid != "" {
-		_ = writeJSONAtomic(sessionIndex(sid), map[string]string{
-			"project": project, "role": role, "realm": Realm(),
-		})
-	}
+	recordEnrollment(id.SessionID, project, role)
 	for _, sub := range []string{"tmp", "new", "cur"} {
 		_ = os.MkdirAll(filepath.Join(inboxDir(project, role), sub), 0o700)
 	}
@@ -255,25 +251,90 @@ func LoadIdentity(project, role string) (Identity, error) {
 	return id, err
 }
 
-// Whoami resolves the calling session's identity.
-func Whoami() (Identity, error) {
+// sessionRec tracks every project this session is enrolled in. A session legitimately
+// holds more than one address — one per project it is working on.
+type sessionRec struct {
+	Current     enrollRef   `json:"current"`
+	Enrollments []enrollRef `json:"enrollments"`
+}
+
+type enrollRef struct {
+	Project string `json:"project"`
+	Role    string `json:"role"`
+	Realm   string `json:"realm"`
+}
+
+func loadSession(sid string) sessionRec {
+	var rec sessionRec
+	b, err := os.ReadFile(sessionIndex(sid))
+	if err != nil {
+		return rec
+	}
+	if json.Unmarshal(b, &rec) == nil && rec.Current.Project != "" {
+		return rec
+	}
+	// Tolerate the flat v0 format so an in-flight session keeps working across upgrades.
+	var flat enrollRef
+	if json.Unmarshal(b, &flat) == nil && flat.Project != "" {
+		return sessionRec{Current: flat, Enrollments: []enrollRef{flat}}
+	}
+	return rec
+}
+
+func recordEnrollment(sid, project, role string) {
+	if sid == "" {
+		return
+	}
+	rec := loadSession(sid)
+	ref := enrollRef{Project: project, Role: role, Realm: Realm()}
+	found := false
+	for i, e := range rec.Enrollments {
+		if e.Project == project {
+			rec.Enrollments[i] = ref
+			found = true
+			break
+		}
+	}
+	if !found {
+		rec.Enrollments = append(rec.Enrollments, ref)
+	}
+	rec.Current = ref
+	_ = writeJSONAtomic(sessionIndex(sid), rec)
+}
+
+// Whoami resolves the calling session's identity. Pass a project to select among
+// multiple enrollments; empty selects the most recent.
+func Whoami(project string) (Identity, error) {
 	if role := os.Getenv("MAILROOM_ROLE"); role != "" {
-		cwd, _ := os.Getwd()
-		return LoadIdentity(ProjectID(cwd), slug(role))
+		p := project
+		if p == "" {
+			cwd, _ := os.Getwd()
+			p = ProjectID(cwd)
+		}
+		return LoadIdentity(p, slug(role))
 	}
 	sid := SessionID()
 	if sid == "" {
 		return Identity{}, fmt.Errorf("no session id: set MAILROOM_ROLE or run inside Claude Code")
 	}
-	b, err := os.ReadFile(sessionIndex(sid))
-	if err != nil {
+	rec := loadSession(sid)
+	if rec.Current.Project == "" {
 		return Identity{}, fmt.Errorf("this session is not enrolled — run /mailroom:enroll first")
 	}
-	var m map[string]string
-	if err := json.Unmarshal(b, &m); err != nil {
-		return Identity{}, err
+	if project == "" {
+		return LoadIdentity(rec.Current.Project, rec.Current.Role)
 	}
-	return LoadIdentity(m["project"], m["role"])
+	for _, e := range rec.Enrollments {
+		if e.Project == project {
+			return LoadIdentity(e.Project, e.Role)
+		}
+	}
+	var have []string
+	for _, e := range rec.Enrollments {
+		have = append(have, e.Project)
+	}
+	return Identity{}, fmt.Errorf("not enrolled in project %q (enrolled in: %s)",
+		project, strings.Join(have, ", "))
 }
 
 // Touch renews the role lease and records liveness.
@@ -290,6 +351,35 @@ func Touch(project, role, state, note string) error {
 		id.Note = note
 	}
 	return writeJSONAtomic(filepath.Join(agentsDir(project), role+".json"), id)
+}
+
+// Neighbours returns live agents in OTHER projects in this realm.
+//
+// The most likely first-run failure is two sessions started from different working
+// directories: both enroll successfully, into different projects, and then sit staring at
+// an empty roster wondering why the other one is invisible. Project isolation is correct
+// behaviour, so we do not guess — we surface it and let the human choose.
+func Neighbours(exclude string) map[string][]Identity {
+	out := map[string][]Identity{}
+	entries, err := os.ReadDir(filepath.Join(RealmDir(), "projects"))
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == exclude {
+			continue
+		}
+		peers, err := Roster(e.Name())
+		if err != nil {
+			continue
+		}
+		for _, p := range peers {
+			if p.Live() {
+				out[e.Name()] = append(out[e.Name()], p)
+			}
+		}
+	}
+	return out
 }
 
 // Roster lists every agent registered in a project, live or not.

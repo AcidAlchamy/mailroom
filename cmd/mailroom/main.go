@@ -112,6 +112,20 @@ func cmdEnroll(args []string) error {
 		fmt.Printf("live peers: %s\n", strings.Join(live, ", "))
 	} else {
 		fmt.Println("no other peers live yet — enroll a second session to talk to")
+		// Almost always a working-directory mismatch, not an empty mailbox.
+		if n := mail.Neighbours(pid); len(n) > 0 {
+			fmt.Println("\nheads up: live agents exist in other projects on this machine —")
+			for proj, peers := range n {
+				var names []string
+				for _, p := range peers {
+					names = append(names, p.Role)
+				}
+				fmt.Printf("  %-24s %s\n", proj, strings.Join(names, ", "))
+			}
+			fmt.Printf("\nThis session resolved to %q from %s.\n", pid, cwd)
+			fmt.Println("If you meant to join one of those, the other session was started from a")
+			fmt.Println("different directory. Re-run from the same repo, or: enroll --project <name>")
+		}
 	}
 	if pending, _ := mail.Peek(pid, id.Role); len(pending) > 0 {
 		fmt.Printf("%d message(s) waiting:\n%s", len(pending), mail.Digest(pending))
@@ -137,9 +151,10 @@ func cmdSend(args []string) error {
 	thread := fs.String("thread", "", "thread id to continue")
 	replyTo := fs.String("in-reply-to", "", "message id being answered")
 	asJSON := fs.Bool("json", false, "machine-readable result")
+	project := fs.String("project", "", "which project to send from (if enrolled in several)")
 	_ = fs.Parse(args)
 
-	me, err := mail.Whoami()
+	me, err := mail.Whoami(*project)
 	if err != nil {
 		return err
 	}
@@ -183,9 +198,10 @@ func cmdSend(args []string) error {
 func cmdInbox(args []string) error {
 	fs := flag.NewFlagSet("inbox", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "machine-readable")
+	project := fs.String("project", "", "which project (if enrolled in several)")
 	_ = fs.Parse(args)
 
-	me, err := mail.Whoami()
+	me, err := mail.Whoami(*project)
 	if err != nil {
 		return err
 	}
@@ -207,7 +223,11 @@ func cmdInbox(args []string) error {
 }
 
 func cmdRead(args []string) error {
-	me, err := mail.Whoami()
+	fs := flag.NewFlagSet("read", flag.ExitOnError)
+	project := fs.String("project", "", "which project (if enrolled in several)")
+	_ = fs.Parse(args)
+	args = fs.Args()
+	me, err := mail.Whoami(*project)
 	if err != nil {
 		return err
 	}
@@ -238,9 +258,10 @@ func cmdRead(args []string) error {
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	note := fs.String("note", "", "one line on what you are doing")
+	project := fs.String("project", "", "which project (if enrolled in several)")
 	_ = fs.Parse(args)
 
-	me, err := mail.Whoami()
+	me, err := mail.Whoami(*project)
 	if err != nil {
 		return err
 	}
@@ -258,11 +279,15 @@ func cmdStatus(args []string) error {
 func cmdRoster(args []string) error {
 	fs := flag.NewFlagSet("roster", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "machine-readable")
+	projFlag := fs.String("project", "", "which project (if enrolled in several)")
 	_ = fs.Parse(args)
 
 	cwd, _ := os.Getwd()
 	project := mail.ProjectID(cwd)
-	if me, err := mail.Whoami(); err == nil {
+	if *projFlag != "" {
+		project = *projFlag
+	}
+	if me, err := mail.Whoami(*projFlag); err == nil {
 		project = me.Project
 	}
 	peers, err := mail.Roster(project)
@@ -299,7 +324,10 @@ func cmdRoster(args []string) error {
 }
 
 func cmdWhoami(args []string) error {
-	me, err := mail.Whoami()
+	fs := flag.NewFlagSet("whoami", flag.ExitOnError)
+	project := fs.String("project", "", "which project (if enrolled in several)")
+	_ = fs.Parse(args)
+	me, err := mail.Whoami(*project)
 	if err != nil {
 		return err
 	}
@@ -316,7 +344,7 @@ func cmdDoctor(args []string) error {
 	fmt.Printf("session:  %s\n", orNone(mail.SessionID()))
 	fmt.Printf("wakes/hr: %d\n", mail.WakesPerHour())
 
-	if me, err := mail.Whoami(); err == nil {
+	if me, err := mail.Whoami(""); err == nil {
 		fmt.Printf("enrolled: yes, as %s\n", me.Short())
 		pending, _ := mail.Peek(me.Project, me.Role)
 		fmt.Printf("unread:   %d\n", len(pending))

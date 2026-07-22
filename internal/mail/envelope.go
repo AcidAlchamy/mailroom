@@ -129,12 +129,45 @@ var injectionPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)</?(system-reminder|task-notification|mailroom-envelope|function_calls|antml)`),
 }
 
-// Sanitize neutralizes markup, strips control characters (ANSI/OSC sequences included),
-// and truncates. The result cannot close a tag or forge a frame.
+// invisible reports characters that a model or terminal does not render but which can
+// split a word, reverse display order, or hide structure. Dropping these is what stops
+// "ig<ZWSP>nore previous instructions" from reading normally while evading detection.
+func invisible(r rune) bool {
+	switch {
+	case r >= 0x200B && r <= 0x200F: // zero-width space/joiners, LRM/RLM
+		return true
+	case r >= 0x202A && r <= 0x202E: // bidi embedding/override (incl. RLO)
+		return true
+	case r >= 0x2060 && r <= 0x2064: // word joiner, invisible operators
+		return true
+	case r >= 0x2066 && r <= 0x2069: // bidi isolates
+		return true
+	case r == 0xFEFF: // BOM / zero-width no-break space
+		return true
+	case r == 0x00AD: // soft hyphen
+		return true
+	case r >= 0xFFF9 && r <= 0xFFFB: // interlinear annotation
+		return true
+	}
+	return false
+}
+
+// foldWidth maps fullwidth/halfwidth forms to their ASCII equivalents, so U+FF1C
+// ("＜") cannot masquerade as a bracket to a human reader while evading the escaper.
+func foldWidth(r rune) rune {
+	if r >= 0xFF01 && r <= 0xFF5E {
+		return r - 0xFF00 + 0x20
+	}
+	return r
+}
+
+// Sanitize neutralizes markup, strips control and invisible characters, folds
+// width-variant homoglyphs, and truncates. The result cannot close a tag or forge a frame.
 func Sanitize(s string, max int) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {
+		r = foldWidth(r)
 		switch {
 		case r == '\n' || r == '\t':
 			b.WriteRune(r)
@@ -146,6 +179,8 @@ func Sanitize(s string, max int) string {
 			b.WriteString("&amp;")
 		case r < 0x20 || r == 0x7f:
 			// drop: ANSI escapes, OSC sequences, NULs, bells
+		case invisible(r):
+			// drop: zero-width splitters, bidi overrides, BOM
 		default:
 			b.WriteRune(r)
 		}
@@ -156,6 +191,33 @@ func Sanitize(s string, max int) string {
 		out = string(rs[:max]) + "… [truncated]"
 	}
 	return out
+}
+
+// fold produces the string that detection runs against: invisibles removed, width
+// variants folded, case normalized, whitespace collapsed. Detection must never see the
+// attacker's spacing, because that spacing is the evasion.
+func fold(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	lastSpace := false
+	for _, r := range s {
+		r = foldWidth(r)
+		// Whitespace FIRST: tab and newline are < 0x20, and dropping them without a
+		// boundary would weld "all"+"previous" together and hide the pattern.
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			if !lastSpace {
+				b.WriteRune(' ')
+				lastSpace = true
+			}
+			continue
+		}
+		if invisible(r) || r < 0x20 || r == 0x7f {
+			continue // removed WITHOUT inserting a boundary: re-joins split words
+		}
+		lastSpace = false
+		b.WriteRune(r)
+	}
+	return strings.ToLower(b.String())
 }
 
 var reCache = map[string]*regexp.Regexp{}
@@ -176,9 +238,12 @@ func matchString(pat, s string) (bool, error) {
 // Flags returns human-readable warnings for instruction-override attempts.
 // We annotate rather than silently strip, so an attack is visible to the human.
 func Flags(s string) []string {
+	folded := fold(s)
 	var out []string
 	for _, re := range injectionPatterns {
-		if re.MatchString(s) {
+		// Match the folded form, not the raw: an attacker's zero-width splitters and
+		// homoglyphs are exactly what a naive match would miss.
+		if re.MatchString(folded) {
 			out = append(out, re.String())
 		}
 	}
