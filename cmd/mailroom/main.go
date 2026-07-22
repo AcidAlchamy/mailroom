@@ -58,6 +58,10 @@ func main() {
 		err = cmdDoctor(args)
 	case "watch":
 		err = cmdWatch(args)
+	case "escalate":
+		err = cmdEscalate(args)
+	case "desk":
+		err = cmdDesk(args)
 	case "hook":
 		os.Exit(cmdHook(args))
 	case "-h", "--help", "help":
@@ -379,6 +383,173 @@ func cmdDoctor(args []string) error {
 		fmt.Println("  reports the same, the monitor cannot bind and only the hook channels work.")
 	}
 	return nil
+}
+
+func cmdEscalate(args []string) error {
+	fs := flag.NewFlagSet("escalate", flag.ExitOnError)
+	var options, tried, evidence multiFlag
+	verdict := fs.String("verdict", "", "one sentence: what is blocked and why agents cannot resolve it")
+	action := fs.String("action", "", "imperative instruction starting with a decision verb")
+	fs.Var(&options, "option", `"id:label:consequence" (repeatable, at least 2)`)
+	def := fs.String("default", "", `"<option-id>:<duration>" applied if nobody answers, e.g. "a:2h"`)
+	fs.Var(&tried, "tried", "what you already attempted (repeatable, required)")
+	fs.Var(&evidence, "evidence", "file:line, PR, commit, or test output (repeatable, required)")
+	blocking := fs.Bool("blocking", false, "work is stopped until this is answered")
+	cost := fs.String("cost-of-delay", "", "required when --blocking")
+	blast := fs.String("blast-radius", "", "required when --blocking")
+	project := fs.String("project", "", "which project (if enrolled in several)")
+	_ = fs.Parse(args)
+
+	me, err := mail.Whoami(*project)
+	if err != nil {
+		return err
+	}
+
+	a := &mail.Ask{
+		Verdict: *verdict, Action: *action, Tried: tried, Evidence: evidence,
+		Blocking: *blocking, CostOfDelay: *cost, BlastRadius: *blast,
+	}
+	for _, o := range options {
+		parts := strings.SplitN(o, ":", 3)
+		opt := mail.Option{ID: strings.TrimSpace(parts[0])}
+		if len(parts) > 1 {
+			opt.Label = strings.TrimSpace(parts[1])
+		}
+		if len(parts) > 2 {
+			opt.Consequence = strings.TrimSpace(parts[2])
+		}
+		a.Options = append(a.Options, opt)
+	}
+	if *def != "" {
+		p := strings.SplitN(*def, ":", 2)
+		a.Default.Choice = strings.TrimSpace(p[0])
+		if len(p) > 1 {
+			a.Default.After = strings.TrimSpace(p[1])
+		}
+	}
+
+	rejects, err := mail.Escalate(me, a)
+	if err != nil {
+		return err
+	}
+	if len(rejects) > 0 {
+		fmt.Fprintln(os.Stderr, "ESCALATION REFUSED — nothing was sent to the human.")
+		fmt.Fprintln(os.Stderr, "\nAn escalation is actionable only if the human can resolve it in ONE action,")
+		fmt.Fprintln(os.Stderr, "without reading the thread, and silence has a defined consequence.")
+		fmt.Fprintln(os.Stderr)
+		for _, r := range rejects {
+			fmt.Fprintf(os.Stderr, "  %s\n", r)
+		}
+		fmt.Fprintln(os.Stderr, "\nRewrite and try again. Talk to the peer first if this is not truly the human's call.")
+		return fmt.Errorf("%d validation failure(s)", len(rejects))
+	}
+	fmt.Printf("escalated %s — deadline %s (default %q if unanswered)\n",
+		a.ID, a.Deadline.Local().Format("15:04 Mon"), a.Default.Choice)
+	return nil
+}
+
+func cmdDesk(args []string) error {
+	fs := flag.NewFlagSet("desk", flag.ExitOnError)
+	project := fs.String("project", "", "which project")
+	asJSON := fs.Bool("json", false, "machine-readable")
+	_ = fs.Parse(args)
+	rest := fs.Args()
+
+	proj := *project
+	if proj == "" {
+		if me, err := mail.Whoami(""); err == nil {
+			proj = me.Project
+		} else {
+			cwd, _ := os.Getwd()
+			proj = mail.ProjectID(cwd)
+		}
+	}
+
+	// Any Desk interaction first applies expired countdowns.
+	for _, a := range mail.SweepDeadlines(proj) {
+		fmt.Printf("auto-resolved %s with default %q (deadline passed)\n", a.ID, a.Answer)
+	}
+
+	sub := "list"
+	if len(rest) > 0 {
+		sub = rest[0]
+	}
+	switch sub {
+	case "list":
+		open, err := mail.OpenAsks(proj)
+		if err != nil {
+			return err
+		}
+		if *asJSON {
+			b, _ := json.MarshalIndent(open, "", "  ")
+			fmt.Println(string(b))
+			return nil
+		}
+		if len(open) == 0 {
+			fmt.Printf("desk clear — nothing needs you in %q\n", proj)
+			return nil
+		}
+		for _, a := range open {
+			flag := ""
+			if a.Blocking {
+				flag = "  [BLOCKING]"
+			}
+			fmt.Printf("\n%s%s  from %s  %s\n", a.ID, flag, a.From, humanAge(a.TS))
+			fmt.Printf("  %s\n", a.Action)
+			for _, o := range a.Options {
+				fmt.Printf("    %-4s %s\n           → %s\n", o.ID+")", o.Label, o.Consequence)
+			}
+			fmt.Printf("  why:      %s\n", a.Verdict)
+			fmt.Printf("  tried:    %s\n", strings.Join(a.Tried, "; "))
+			fmt.Printf("  evidence: %s\n", strings.Join(a.Evidence, ", "))
+			if a.Blocking {
+				fmt.Printf("  cost:     %s\n  blast:    %s\n", a.CostOfDelay, a.BlastRadius)
+			}
+			fmt.Printf("  if you say nothing: %q in %s\n", a.Default.Choice, remaining(a.Deadline))
+		}
+		fmt.Printf("\nanswer with: mailroom desk answer <id> <option>\n")
+		return nil
+
+	case "answer":
+		if len(rest) < 3 {
+			return fmt.Errorf("usage: mailroom desk answer <id> <option-id>")
+		}
+		a, err := mail.Resolve(proj, rest[1], rest[2], "owner")
+		if err != nil {
+			return err
+		}
+		fmt.Printf("answered %s with %q — %s notified\n", a.ID, a.Answer, a.From)
+		return nil
+
+	case "defer":
+		if len(rest) < 3 {
+			return fmt.Errorf("usage: mailroom desk defer <id> <duration>")
+		}
+		d, err := time.ParseDuration(rest[2])
+		if err != nil {
+			return fmt.Errorf("bad duration %q", rest[2])
+		}
+		a, err := mail.Defer(proj, rest[1], d)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("deferred %s until %s\n", a.ID, a.Deadline.Local().Format("15:04 Mon"))
+		return nil
+
+	default:
+		return fmt.Errorf("unknown desk subcommand %q (list, answer, defer)", sub)
+	}
+}
+
+func remaining(t time.Time) string {
+	d := time.Until(t)
+	if d < 0 {
+		return "overdue"
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	return fmt.Sprintf("%.1fh", d.Hours())
 }
 
 func cmdWatch(args []string) error {

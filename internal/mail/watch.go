@@ -80,6 +80,13 @@ func deliverOnce(w io.Writer, diag io.Writer) bool {
 		if err != nil {
 			continue
 		}
+		// Countdowns must run whether or not a human is looking. Otherwise
+		// default_if_silent only fires when the user opens the Desk, which is exactly
+		// the dependency it exists to remove. Resolve() mails the asker, so the
+		// notification arrives through the normal channel below.
+		for _, fired := range SweepDeadlines(e.Project) {
+			fmt.Fprintf(diag, "mailroom watch: %s expired, applied default %q\n", fired.ID, fired.Answer)
+		}
 		// A monitor tick is not activity; it must not renew the role lease, or a dead
 		// session would hold its role forever and mail would pile up unread.
 		pending, err := Peek(e.Project, e.Role)

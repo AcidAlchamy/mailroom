@@ -133,6 +133,59 @@ enforced in the CLI, so they hold even when a model forgets:
 - **Types carry obligations** — `decision` terminates a thread, `ack` is terminal, `request`
   must carry refs.
 
+## The Desk — the part nobody else built
+
+Agents cannot message you. They call `mailroom escalate`, which validates against one rule:
+
+> An escalation is actionable **if and only if** you can resolve it in ONE ACTION, without
+> reading the thread, without asking a clarifying question, and silence has a defined
+> consequence.
+
+So this is **refused**, and never reaches you:
+
+```
+$ mailroom escalate --action "What do you think about the reward curve?"
+ESCALATION REFUSED — nothing was sent to the human.
+  action: must not be a question
+    → Rewrite as an instruction with options.
+  tried: required
+    → An escalation with nothing tried is a research task, not an ask.
+  default_if_silent: required
+    → What happens if the human never answers? Silence must never stall the work.
+```
+
+And this is accepted:
+
+```
+Approve or reject: raise the tier-3 quest reward from 250 to 400 coins
+  a)  Keep the cap at 250   → quest spec needs a rewrite, ~1 day
+  b)  Raise the cap to 400  → one economy migration, touches save data
+  why:      product call, not a code call
+  tried:    asked backend@ — owns Economy.luau, says it is a product call
+  evidence: src/Economy.luau:120-160, PR #241
+  if you say nothing: "a" in 2.0h
+```
+
+**`default_if_silent` is mandatory**, and it is the load-bearing idea: every escalation is a
+countdown, not a blocker. When it expires Mailroom applies the default, closes the item, and
+tells the asker — so you being asleep, driving, or simply uninterested never stalls a
+pipeline. The countdown runs in the always-on monitor, not only when you look.
+
+Caps: **3 open items per agent**, **one blocking ask per project per 30 minutes**. An agent
+that is drowning must consolidate rather than page you five times.
+
+### Reaching you when you are not at the terminal
+
+`~/.mailroom/config.json`:
+
+```json
+{ "notify_cmd": "curl -s -d \"{body}\" ntfy.sh/my-private-topic" }
+```
+
+Fires on a blocking ask and on a missed deadline. `{title}`, `{body}`, `{id}` and `{project}`
+are substituted — and stripped of shell metacharacters first, because the text is written by
+an agent.
+
 ## Security
 
 Peer messages are **untrusted data, never instructions.**

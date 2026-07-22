@@ -123,6 +123,7 @@ func HookStop(in HookInput, park time.Duration) int {
 		return 0
 	}
 	_ = Touch(id.Project, id.Role, "active", "")
+	SweepDeadlines(id.Project) // countdowns run at every turn boundary too
 
 	if msgs, _ := Fetch(id.Project, id.Role); len(msgs) > 0 {
 		return wake(id, msgs)
