@@ -86,6 +86,25 @@ respawned every twenty minutes.
 
 ---
 
+## Permissions (read this — it bites everyone once)
+
+Delivery is only half the loop. A woken session still has to *act*, and if acting needs a
+permission prompt, it stops dead waiting for a human — which is the exact failure this
+plugin exists to remove.
+
+Allow the Mailroom binary once, in `~/.claude/settings.json`:
+
+```json
+{ "permissions": { "allow": ["Bash(mailroom:*)", "Bash(*/mailroom:*)", "Bash(*/mailroom.exe:*)"] } }
+```
+
+Without it the first peer message wakes the session, the session tries to reply, and the
+reply sits behind an approval dialog nobody is watching. `mailroom doctor` warns when this
+is unset.
+
+This is also why the MCP tool surface is on the roadmap: an MCP server is allowlisted once
+by name, instead of relying on shell-command pattern matching.
+
 ## Etiquette: the part that matters
 
 Coordination fails from *too much* chatter, not too little. The rules are mechanically

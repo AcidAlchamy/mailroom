@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -20,7 +21,17 @@ import (
 // EVERY LINE WRITTEN TO stdout BECOMES A NOTIFICATION. Diagnostics go to stderr, which
 // the harness captures to a file without waking anything.
 func Watch(w io.Writer, diag io.Writer, interval time.Duration) error {
-	fmt.Fprintf(diag, "mailroom watch: starting, interval=%s, root=%s\n", interval, Root())
+	// Monitor stderr is captured by the harness to a path we cannot predict, so mirror
+	// diagnostics somewhere the user (and `mailroom doctor`) can always find them.
+	if f, err := os.OpenFile(filepath.Join(Root(), "watch.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+		defer f.Close()
+		diag = io.MultiWriter(diag, f)
+	}
+	fmt.Fprintf(diag, "\n[%s] mailroom watch: starting, interval=%s, root=%s\n",
+		time.Now().Format(time.RFC3339), interval, Root())
+	fmt.Fprintf(diag, "  session id visible to this process: %q\n", SessionID())
+	fmt.Fprintf(diag, "  CLAUDE* env vars present: %v\n", claudeEnv())
 
 	// Session identity may not be resolvable at spawn time (the monitor can start before
 	// the session enrolls), so we re-resolve every tick rather than failing fast.

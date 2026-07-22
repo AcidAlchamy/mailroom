@@ -363,6 +363,15 @@ func cmdDoctor(args []string) error {
 	fmt.Println("covers a session idle for hours. Both race, and atomic delivery means exactly")
 	fmt.Println("one of them wins any given message.")
 
+	if ok, path := mail.PermissionAllowed(); !ok {
+		fmt.Println("\nWARNING: no permission rule found for the mailroom binary.")
+		fmt.Println("  A woken session will stall on an approval prompt when it tries to reply,")
+		fmt.Println("  which defeats the point. Add to " + path + ":")
+		fmt.Println(`    { "permissions": { "allow": ["Bash(mailroom:*)", "Bash(*/mailroom:*)", "Bash(*/mailroom.exe:*)"] } }`)
+	} else {
+		fmt.Println("\npermissions: mailroom is allowlisted, replies will not stall on approval")
+	}
+
 	if sid := mail.SessionID(); sid != "" {
 		fmt.Printf("\nmonitor binding: session id visible to child processes (%s)\n", short(sid))
 	} else {

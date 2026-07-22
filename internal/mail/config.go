@@ -403,3 +403,35 @@ func Roster(project string) ([]Identity, error) {
 	}
 	return out, nil
 }
+
+// PermissionAllowed reports whether the user has allowlisted the mailroom binary.
+//
+// This is not paranoia about settings hygiene: delivery is only half the loop. A session
+// woken by a peer still has to act, and an unapproved Bash command stalls on a dialog
+// nobody is watching — reintroducing the human as a blocking dependency, which is the
+// exact failure this plugin exists to remove.
+func PermissionAllowed() (bool, string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, "~/.claude/settings.json"
+	}
+	path := filepath.Join(home, ".claude", "settings.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false, path
+	}
+	var cfg struct {
+		Permissions struct {
+			Allow []string `json:"allow"`
+		} `json:"permissions"`
+	}
+	if json.Unmarshal(b, &cfg) != nil {
+		return false, path
+	}
+	for _, rule := range cfg.Permissions.Allow {
+		if strings.Contains(rule, "mailroom") {
+			return true, path
+		}
+	}
+	return false, path
+}
